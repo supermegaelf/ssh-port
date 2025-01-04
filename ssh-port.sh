@@ -28,8 +28,8 @@ read -p "Connection successful? (y/n): " success
 if [[ "$success" == "y" ]]; then
     ${FIREWALL_CMD} delete allow 22/tcp
     check_command "Removing old SSH port..."
-    echo "DONE."
+    echo "Done."
 else
-    echo "FAILED. Check your settings."
+    echo "Failed. Check your settings."
     exit 1
 fi
