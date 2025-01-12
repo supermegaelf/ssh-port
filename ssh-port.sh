@@ -6,9 +6,9 @@ FIREWALL_CMD="ufw"
 
 check_command() {
     if [ $? -eq 0 ]; then
-        echo "✔ $1 Done."
+        echo "$1 Done."
     else
-        echo "✖ Failed: $1"
+        echo "Failed: $1"
         exit 1
     fi
 }
