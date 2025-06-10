@@ -76,7 +76,7 @@ if [[ "$success" =~ ^[Yy]$ ]]; then
     else
         echo "No rule for port ${CURRENT_PORT} found, skipping removal."
     fi
-    echo "Done. SSH port changed to \033[32m${NEW_SSH_PORT}\033[0m."
+    echo -e "Done. SSH port changed to \033[32m${NEW_SSH_PORT}\033[0m."
 else
     echo "Connection failed. Reverting changes..."
     cp ${BACKUP_CONFIG} ${SSH_CONFIG}
