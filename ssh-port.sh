@@ -13,17 +13,14 @@ check_command() {
     fi
 }
 
-# Запрос порта у пользователя (дефолт 2222)
 read -p "Enter new SSH port (default 2222): " NEW_SSH_PORT
 NEW_SSH_PORT=${NEW_SSH_PORT:-2222}
 
-# Проверка, является ли порт допустимым числом в диапазоне 1-65535
 if ! [[ "$NEW_SSH_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_SSH_PORT" -lt 1 ] || [ "$NEW_SSH_PORT" -gt 65535 ]; then
     echo "Error: Invalid port number. Please enter a number between 1 and 65535."
     exit 1
 fi
 
-# Определение текущего порта SSH
 CURRENT_PORT=$(grep -E "^Port " ${SSH_CONFIG} | awk '{print $2}' || echo "22")
 if [ -z "$CURRENT_PORT" ]; then
     CURRENT_PORT="22"
