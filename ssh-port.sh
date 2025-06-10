@@ -30,6 +30,22 @@ fi
 check_command "Changing SSH port to ${NEW_SSH_PORT}"
 
 systemctl restart ssh
+if [ $? -ne 0 ]; then
+    echo "Failed: Restarting SSH service. Reverting changes..."
+    if [[ -f "${BACKUP_CONFIG}" ]]; then
+        cp ${BACKUP_CONFIG} ${SSH_CONFIG}
+        systemctl restart ssh
+        if [ $? -ne 0 ]; then
+            echo "Error: Failed to restart SSH after reverting config. Check manually!"
+            exit 1
+        fi
+        ${FIREWALL_CMD} delete allow ${NEW_SSH_PORT}/tcp 2>/dev/null || true
+        echo "Reverted to original SSH config due to error."
+    else
+        echo "Error: Backup file ${BACKUP_CONFIG} not found. Cannot revert."
+    fi
+    exit 1
+fi
 check_command "Restarting SSH service"
 
 ${FIREWALL_CMD} allow ${NEW_SSH_PORT}/tcp comment "SSH"
@@ -52,6 +68,7 @@ else
     echo "Connection failed. Reverting changes..."
     cp ${BACKUP_CONFIG} ${SSH_CONFIG}
     systemctl restart ssh
+    check_command "Restoring SSH service after failed connection"
     ${FIREWALL_CMD} delete allow ${NEW_SSH_PORT}/tcp
     echo "Reverted to original SSH config. Check your settings."
     exit 1
