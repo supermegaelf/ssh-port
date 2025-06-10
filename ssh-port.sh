@@ -15,7 +15,7 @@ check_command() {
 
 # Запрос порта у пользователя (дефолт 2222)
 read -p "Enter new SSH port (default 2222): " NEW_SSH_PORT
-NEW_SSH_PORT=${NEW_SSH_PORT:-2222}
+NEW_SSH_PORT="${NEW_SSH_PORT:-2222}"
 
 # Проверка, является ли порт допустимым числом в диапазоне 1-65535
 if ! [[ "$NEW_SSH_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_SSH_PORT" -lt 1 ] || [ "$NEW_SSH_PORT" -gt 65535 ]; then
@@ -24,24 +24,24 @@ if ! [[ "$NEW_SSH_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_SSH_PORT" -lt 1 ] || [ "$NEW_S
 fi
 
 # Определение текущего порта SSH
-CURRENT_PORT=$(grep -E "^Port " ${SSH_CONFIG} | awk '{print $2}' || echo "22")
+CURRENT_PORT=$(grep -E "^Port " "${SSH_CONFIG}" | awk '{print $2}' || echo "22")
 if [ -z "$CURRENT_PORT" ]; then
     CURRENT_PORT="22"
 fi
 echo "Current SSH port: ${CURRENT_PORT}"
 
-if ! command -v ${FIREWALL_CMD} &> /dev/null || ! ${FIREWALL_CMD} status | grep -q "Status: active"; then
+if ! command -v "${FIREWALL_CMD}" &> /dev/null || ! "${FIREWALL_CMD}" status | grep -q "Status: active"; then
     echo "Error: UFW is not installed or not active. Please install and enable it first."
     exit 1
 fi
 
-cp ${SSH_CONFIG} ${BACKUP_CONFIG}
+cp "${SSH_CONFIG}" "${BACKUP_CONFIG}"
 check_command "Backing up SSH config to ${BACKUP_CONFIG}"
 
-if grep -q "^Port " ${SSH_CONFIG}; then
-    sed -i "s/^Port .*/Port ${NEW_SSH_PORT}/" ${SSH_CONFIG}
+if grep -q "^Port " "${SSH_CONFIG}"; then
+    sed -i "s/^Port .*/Port ${NEW_SSH_PORT}/" "${SSH_CONFIG}"
 else
-    echo "Port ${NEW_SSH_PORT}" >> ${SSH_CONFIG}
+    echo "Port ${NEW_SSH_PORT}" >> "${SSH_CONFIG}"
 fi
 check_command "Changing SSH port to ${NEW_SSH_PORT}"
 
@@ -49,13 +49,13 @@ systemctl restart ssh
 if [ $? -ne 0 ]; then
     echo "Failed: Restarting SSH service. Reverting changes..."
     if [[ -f "${BACKUP_CONFIG}" ]]; then
-        cp ${BACKUP_CONFIG} ${SSH_CONFIG}
+        cp "${BACKUP_CONFIG}" "${SSH_CONFIG}"
         systemctl restart ssh
         if [ $? -ne 0 ]; then
             echo "Error: Failed to restart SSH after reverting config. Check manually!"
             exit 1
         fi
-        ${FIREWALL_CMD} delete allow ${NEW_SSH_PORT}/tcp 2>/dev/null || true
+        "${FIREWALL_CMD}" delete allow "${NEW_SSH_PORT}/tcp" 2>/dev/null || true
         echo "Reverted to original SSH config due to error."
     else
         echo "Error: Backup file ${BACKUP_CONFIG} not found. Cannot revert."
@@ -64,28 +64,32 @@ if [ $? -ne 0 ]; then
 fi
 check_command "Restarting SSH service"
 
-${FIREWALL_CMD} allow ${NEW_SSH_PORT}/tcp comment "SSH"
+"${FIREWALL_CMD}" allow "${NEW_SSH_PORT}/tcp" comment "SSH"
 check_command "Adding new SSH port ${NEW_SSH_PORT}"
 
 echo "Please test SSH connection to this server using the new port (${NEW_SSH_PORT}) in a new terminal."
 echo "Command example: ssh -p ${NEW_SSH_PORT} user@<server-ip>"
 echo "Do not close this session until you confirm connectivity!"
-read -p "Connection successful? (y/n): " success
+read -p "Connection \033[32msuccessful\033[0m? (y/n): " success
 
 if [[ "$success" =~ ^[Yy]$ ]]; then
-    if ${FIREWALL_CMD} status | grep -q "${CURRENT_PORT}/tcp.*ALLOW"; then
-        ${FIREWALL_CMD} delete allow ${CURRENT_PORT}/tcp
+    if "${FIREWALL_CMD}" status | grep -q "${CURRENT_PORT}/tcp.*ALLOW"; then
+        "${FIREWALL_CMD}" delete allow "${CURRENT_PORT}/tcp"
         check_command "Removing old SSH port ${CURRENT_PORT}"
     else
         echo "No rule for port ${CURRENT_PORT} found, skipping removal."
     fi
-    echo -e "Done. SSH port changed to \033[32m${NEW_SSH_PORT}\033[0m."
+    if [ -t 1 ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+        printf "Done. SSH port changed to \033[32m%s\033[0m.\n" "${NEW_SSH_PORT}"
+    else
+        echo "Done. SSH port changed to ${NEW_SSH_PORT}."
+    fi
 else
     echo "Connection failed. Reverting changes..."
-    cp ${BACKUP_CONFIG} ${SSH_CONFIG}
+    cp "${BACKUP_CONFIG}" "${SSH_CONFIG}"
     systemctl restart ssh
     check_command "Restoring SSH service after failed connection"
-    ${FIREWALL_CMD} delete allow ${NEW_SSH_PORT}/tcp
+    "${FIREWALL_CMD}" delete allow "${NEW_SSH_PORT}/tcp"
     echo "Reverted to original SSH config. Check your settings."
     exit 1
 fi
