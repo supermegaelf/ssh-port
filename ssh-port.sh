@@ -1,6 +1,5 @@
 #!/bin/bash
 
-NEW_SSH_PORT=2222
 SSH_CONFIG="/etc/ssh/sshd_config"
 FIREWALL_CMD="ufw"
 BACKUP_CONFIG="${SSH_CONFIG}.bak.$(date +%F_%T)"
@@ -13,6 +12,16 @@ check_command() {
         exit 1
     fi
 }
+
+# Запрос порта у пользователя (дефолт 2222)
+read -p "Enter new SSH port (default 2222): " NEW_SSH_PORT
+NEW_SSH_PORT=${NEW_SSH_PORT:-2222}
+
+# Проверка, является ли порт допустимым числом в диапазоне 1-65535
+if ! [[ "$NEW_SSH_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_SSH_PORT" -lt 1 ] || [ "$NEW_SSH_PORT" -gt 65535 ]; then
+    echo "Error: Invalid port number. Please enter a number between 1 and 65535."
+    exit 1
+fi
 
 if ! command -v ${FIREWALL_CMD} &> /dev/null || ! ${FIREWALL_CMD} status | grep -q "Status: active"; then
     echo "Error: UFW is not installed or not active. Please install and enable it first."
