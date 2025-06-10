@@ -21,6 +21,12 @@ if ! [[ "$NEW_SSH_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_SSH_PORT" -lt 1 ] || [ "$NEW_S
     exit 1
 fi
 
+CURRENT_PORT=$(grep -E "^Port " ${SSH_CONFIG} | awk '{print $2}' || echo "22")
+if [ -z "$CURRENT_PORT" ]; then
+    CURRENT_PORT="22"
+fi
+echo "Current SSH port: ${CURRENT_PORT}"
+
 if ! command -v ${FIREWALL_CMD} &> /dev/null || ! ${FIREWALL_CMD} status | grep -q "Status: active"; then
     echo "Error: UFW is not installed or not active. Please install and enable it first."
     exit 1
@@ -64,13 +70,13 @@ echo "Do not close this session until you confirm connectivity!"
 read -p "Connection successful? (y/n): " success
 
 if [[ "$success" =~ ^[Yy]$ ]]; then
-    if ${FIREWALL_CMD} status | grep -q "22/tcp.*ALLOW"; then
-        ${FIREWALL_CMD} delete allow 22/tcp
-        check_command "Removing old SSH port 22"
+    if ${FIREWALL_CMD} status | grep -q "${CURRENT_PORT}/tcp.*ALLOW"; then
+        ${FIREWALL_CMD} delete allow ${CURRENT_PORT}/tcp
+        check_command "Removing old SSH port ${CURRENT_PORT}"
     else
-        echo "No rule for port 22 found, skipping removal."
+        echo "No rule for port ${CURRENT_PORT} found, skipping removal."
     fi
-    echo "Done. SSH port changed to ${NEW_SSH_PORT}."
+    echo "Done. SSH port changed to \033[32m${NEW_SSH_PORT}\033[0m."
 else
     echo "Connection failed. Reverting changes..."
     cp ${BACKUP_CONFIG} ${SSH_CONFIG}
