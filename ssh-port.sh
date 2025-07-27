@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#===============================
-# SSH PORT CONFIGURATION SCRIPT
-#===============================
+#==================
+# SSH PORT MANAGER
+#==================
 
 # Color constants
 readonly RED='\033[0;31m'
@@ -211,9 +211,9 @@ test_connection() {
 
 show_completion_summary() {
     echo
-    echo -e "${PURPLE}==========================${NC}"
-    echo -e "${GREEN}${CHECK}${NC} Configuration complete!"
-    echo -e "${PURPLE}==========================${NC}"
+    echo -e "${PURPLE}=========================${NC}"
+    echo -e "${GREEN}${CHECK}${NC} Installation complete!"
+    echo -e "${PURPLE}=========================${NC}"
     echo
     echo -e "${CYAN}Configuration Summary:${NC}"
     echo -e "${WHITE}• SSH port changed from ${CURRENT_PORT} to ${NEW_SSH_PORT}${NC}"
@@ -227,9 +227,9 @@ show_completion_summary() {
 
 main() {
     echo
-    echo -e "${PURPLE}=======================${NC}"
-    echo -e "${WHITE}SSH PORT CONFIGURATION${NC}"
-    echo -e "${PURPLE}=======================${NC}"
+    echo -e "${PURPLE}=================${NC}"
+    echo -e "${WHITE}SSH PORT MANAGER${NC}"
+    echo -e "${PURPLE}=================${NC}"
 
     get_port_input
     verify_system
