@@ -147,7 +147,7 @@ update_ssh_config() {
 
     if $SOCKET_ACTIVE; then
         mkdir -p "$(dirname ${SOCKET_OVERRIDE})"
-        printf "[Socket]\nListenStream=\nListenStream=%s\n" "${NEW_SSH_PORT}" > "${SOCKET_OVERRIDE}"
+        printf "[Socket]\nListenStream=\nListenStream=0.0.0.0:%s\nListenStream=[::]:%s\n" "${NEW_SSH_PORT}" "${NEW_SSH_PORT}" > "${SOCKET_OVERRIDE}"
         echo -e "${GRAY}  ${ARROW}${NC} Updating socket activation config"
     fi
 
