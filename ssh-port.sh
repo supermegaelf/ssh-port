@@ -183,6 +183,10 @@ configure_firewall() {
     echo -e "${CYAN}${INFO}${NC} Adding firewall rule..."
     echo -e "${GRAY}  ${ARROW}${NC} Allowing port ${NEW_SSH_PORT}/tcp"
     ${FIREWALL_CMD} allow ${NEW_SSH_PORT}/tcp comment "SSH" > /dev/null 2>&1
+    if ! iptables -L ufw-user-input -n 2>/dev/null | grep -q "dpt:${NEW_SSH_PORT}"; then
+        echo -e "${GRAY}  ${ARROW}${NC} Rule not in iptables, reloading UFW"
+        ${FIREWALL_CMD} reload > /dev/null 2>&1
+    fi
     check_command "Firewall rule added for port ${NEW_SSH_PORT}"
 }
 
