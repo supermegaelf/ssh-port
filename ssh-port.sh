@@ -69,9 +69,6 @@ verify_system() {
     echo
 
     echo -e "${CYAN}${INFO}${NC} Checking current configuration..."
-    echo -e "${GRAY}  ${ARROW}${NC} Reading current SSH configuration"
-    echo -e "${GRAY}  ${ARROW}${NC} Detecting active port settings"
-    echo -e "${GRAY}  ${ARROW}${NC} Validating port availability"
     CURRENT_PORT=$(grep -E "^Port " ${SSH_CONFIG} | awk '{print $2}' || echo "22")
     if [ -z "$CURRENT_PORT" ]; then
         CURRENT_PORT="22"
@@ -79,17 +76,11 @@ verify_system() {
     echo -e "${GRAY}  ${ARROW}${NC} Current SSH port: ${CURRENT_PORT}"
     echo -e "${GRAY}  ${ARROW}${NC} New SSH port: ${NEW_SSH_PORT}"
     echo -e "${GREEN}${CHECK}${NC} Configuration analysis completed!"
-    
-    echo
-    echo -e "${CYAN}${INFO}${NC} Verifying firewall status..."
-    echo -e "${GRAY}  ${ARROW}${NC} Checking UFW installation"
-    echo -e "${GRAY}  ${ARROW}${NC} Validating firewall status"
-    echo -e "${GRAY}  ${ARROW}${NC} Confirming rule management capability"
+
     if ! command -v ${FIREWALL_CMD} &> /dev/null || ! ${FIREWALL_CMD} status | grep -q "Status: active" > /dev/null 2>&1; then
         echo -e "${RED}${CROSS}${NC} UFW is not installed or not active. Please install and enable it first."
         exit 1
     fi
-    echo -e "${GREEN}${CHECK}${NC} Firewall verification completed!"
 }
 
 create_backup() {
@@ -99,8 +90,6 @@ create_backup() {
     echo
 
     echo -e "${CYAN}${INFO}${NC} Creating configuration backup..."
-    echo -e "${GRAY}  ${ARROW}${NC} Generating timestamp for backup"
-    echo -e "${GRAY}  ${ARROW}${NC} Creating backup directory structure"
     echo -e "${GRAY}  ${ARROW}${NC} Copying configuration to ${BLUE}${BACKUP_CONFIG}${NC}"
     cp ${SSH_CONFIG} ${BACKUP_CONFIG} > /dev/null 2>&1
     check_command "Configuration backup created successfully"
@@ -113,8 +102,6 @@ update_ssh_config() {
     echo
 
     echo -e "${CYAN}${INFO}${NC} Updating SSH configuration..."
-    echo -e "${GRAY}  ${ARROW}${NC} Analyzing current configuration structure"
-    echo -e "${GRAY}  ${ARROW}${NC} Preparing configuration modifications"
     if grep -q "^Port " ${SSH_CONFIG}; then
         echo -e "${GRAY}  ${ARROW}${NC} Modifying existing Port directive"
         sed -i "s/^Port .*/Port ${NEW_SSH_PORT}/" ${SSH_CONFIG} > /dev/null 2>&1
@@ -122,14 +109,8 @@ update_ssh_config() {
         echo -e "${GRAY}  ${ARROW}${NC} Adding new Port directive"
         echo "Port ${NEW_SSH_PORT}" >> ${SSH_CONFIG}
     fi
-    echo -e "${GRAY}  ${ARROW}${NC} Validating configuration syntax"
     check_command "SSH port configuration updated to ${NEW_SSH_PORT}"
-    
-    echo
-    echo -e "${CYAN}${INFO}${NC} Restarting SSH service..."
-    echo -e "${GRAY}  ${ARROW}${NC} Stopping SSH service gracefully"
-    echo -e "${GRAY}  ${ARROW}${NC} Applying new configuration"
-    echo -e "${GRAY}  ${ARROW}${NC} Starting SSH service with new settings"
+
     systemctl restart ssh > /dev/null 2>&1
     if [ $? -ne 0 ]; then
         echo -e "${RED}${CROSS}${NC} Failed to restart SSH service. Reverting changes..."
@@ -157,10 +138,6 @@ configure_firewall() {
     echo -e "${GREEN}======================${NC}"
     echo
 
-    echo -e "${CYAN}${INFO}${NC} Adding firewall rule for new SSH port..."
-    echo -e "${GRAY}  ${ARROW}${NC} Preparing firewall rule for port ${NEW_SSH_PORT}"
-    echo -e "${GRAY}  ${ARROW}${NC} Adding TCP protocol specification"
-    echo -e "${GRAY}  ${ARROW}${NC} Applying SSH service comment"
     ${FIREWALL_CMD} allow ${NEW_SSH_PORT}/tcp comment "SSH" > /dev/null 2>&1
     check_command "Firewall rule added for port ${NEW_SSH_PORT}"
 }
@@ -185,8 +162,6 @@ test_connection() {
     if [[ "$success" =~ ^[Yy]$ ]]; then
         echo
         echo -e "${CYAN}${INFO}${NC} Finalizing configuration..."
-        echo -e "${GRAY}  ${ARROW}${NC} Checking for old firewall rules"
-        echo -e "${GRAY}  ${ARROW}${NC} Cleaning up previous port configuration"
         if ${FIREWALL_CMD} status | grep -q "${CURRENT_PORT}/tcp.*ALLOW" > /dev/null 2>&1; then
             echo -e "${GRAY}  ${ARROW}${NC} Removing old firewall rule for port ${CURRENT_PORT}"
             ${FIREWALL_CMD} delete allow ${CURRENT_PORT}/tcp > /dev/null 2>&1
