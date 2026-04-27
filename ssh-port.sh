@@ -163,9 +163,11 @@ test_connection() {
     if [[ "$success" =~ ^[Yy]$ ]]; then
         echo
         echo -e "${CYAN}${INFO}${NC} Finalizing configuration..."
-        if ${FIREWALL_CMD} status | grep -q "${CURRENT_PORT}/tcp.*ALLOW" > /dev/null 2>&1; then
+        if ${FIREWALL_CMD} status | grep -qE "${CURRENT_PORT}/tcp.*ALLOW" || \
+           { [ "$CURRENT_PORT" = "22" ] && ${FIREWALL_CMD} status | grep -q "OpenSSH.*ALLOW"; }; then
             echo -e "${GRAY}  ${ARROW}${NC} Removing old firewall rule for port ${CURRENT_PORT}"
-            ${FIREWALL_CMD} delete allow ${CURRENT_PORT}/tcp > /dev/null 2>&1
+            ${FIREWALL_CMD} delete allow ${CURRENT_PORT}/tcp > /dev/null 2>&1 || true
+            [ "$CURRENT_PORT" = "22" ] && ${FIREWALL_CMD} delete allow OpenSSH > /dev/null 2>&1 || true
             check_command "Old SSH port ${CURRENT_PORT} removed from firewall"
         else
             echo -e "${GRAY}  ${ARROW}${NC} No rule for port ${CURRENT_PORT} found, skipping removal"
