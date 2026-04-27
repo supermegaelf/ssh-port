@@ -50,9 +50,9 @@ get_port_input() {
     echo -e "${GREEN}==========${NC}"
     echo
 
-    echo -ne "${CYAN}Enter new SSH port (default 2222, press Enter to use it): ${NC}"
+    echo -ne "${CYAN}Enter new SSH port (default 40000, press Enter to use it): ${NC}"
     read NEW_SSH_PORT
-    NEW_SSH_PORT=${NEW_SSH_PORT:-2222}
+    NEW_SSH_PORT=${NEW_SSH_PORT:-40000}
 
     if ! [[ "$NEW_SSH_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_SSH_PORT" -lt 1 ] || [ "$NEW_SSH_PORT" -gt 65535 ]; then
         echo -e "${RED}${CROSS}${NC} Invalid port number. Please enter a number between 1 and 65535."
