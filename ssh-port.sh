@@ -128,7 +128,7 @@ update_ssh_config() {
         fi
         exit 1
     fi
-    check_command "SSH configuration applied successfully"
+    echo -e "${GREEN}${CHECK}${NC} SSH configuration applied successfully"
 }
 
 configure_firewall() {
@@ -177,10 +177,14 @@ test_connection() {
         echo -e "${GRAY}  ${ARROW}${NC} Restoring original configuration"
         cp ${BACKUP_CONFIG} ${SSH_CONFIG}
         systemctl restart ssh > /dev/null 2>&1
-        check_command "SSH configuration restored"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}${CROSS}${NC} Failed to restart SSH after reverting. Check manually!"
+            exit 1
+        fi
         echo -e "${GRAY}  ${ARROW}${NC} Removing new firewall rule"
         ${FIREWALL_CMD} delete allow ${NEW_SSH_PORT}/tcp > /dev/null 2>&1
-        echo -e "${YELLOW}${WARNING}${NC} Reverted to original SSH config. Check your settings."
+        echo -e "${GREEN}${CHECK}${NC} Reverted to original SSH config"
+        echo -e "${YELLOW}${WARNING}${NC} Check your settings."
         exit 1
     fi
 }
