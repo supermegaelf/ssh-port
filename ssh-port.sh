@@ -73,7 +73,7 @@ get_port_input() {
     echo
 
     echo -ne "${CYAN}Enter new SSH port (default 40000, press Enter to use it): ${NC}"
-    read NEW_SSH_PORT
+    read -r NEW_SSH_PORT
     NEW_SSH_PORT=${NEW_SSH_PORT:-40000}
 
     if ! [[ "$NEW_SSH_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_SSH_PORT" -lt 1 ] || [ "$NEW_SSH_PORT" -gt 65535 ]; then
@@ -121,7 +121,7 @@ create_backup() {
 
     echo -e "${CYAN}${INFO}${NC} Creating configuration backup..."
     echo -e "${GRAY}  ${ARROW}${NC} Copying configuration to ${BLUE}${BACKUP_CONFIG}${NC}"
-    cp ${SSH_CONFIG} ${BACKUP_CONFIG} > /dev/null 2>&1
+    cp "${SSH_CONFIG}" "${BACKUP_CONFIG}" > /dev/null 2>&1
     check_command "Configuration backup created successfully"
 
     if $SOCKET_ACTIVE && [ -f "${SOCKET_OVERRIDE}" ]; then
@@ -157,7 +157,7 @@ update_ssh_config() {
         echo -e "${RED}${CROSS}${NC} Failed to restart SSH service. Reverting changes..."
         if [[ -f "${BACKUP_CONFIG}" ]]; then
             echo -e "${GRAY}  ${ARROW}${NC} Restoring original configuration"
-            cp ${BACKUP_CONFIG} ${SSH_CONFIG}
+            cp "${BACKUP_CONFIG}" "${SSH_CONFIG}"
             revert_socket
             restart_ssh
             if [ $? -ne 0 ]; then
@@ -201,7 +201,7 @@ test_connection() {
     echo
 
     echo -ne "${CYAN}Connection successful? (y/n): ${NC}"
-    read success
+    read -r success
 
     if [[ "$success" =~ ^[Yy]$ ]]; then
         echo
@@ -252,6 +252,11 @@ show_completion_summary() {
 #==================
 
 main() {
+    if [ "$EUID" -ne 0 ]; then
+        echo -e "${RED}${CROSS}${NC} This script must be run as root."
+        exit 1
+    fi
+
     echo
     echo -e "${PURPLE}=================${NC}"
     echo -e "${WHITE}SSH PORT MANAGER${NC}"
