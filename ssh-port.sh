@@ -94,7 +94,7 @@ verify_system() {
 
     if systemctl is-active ssh.socket > /dev/null 2>&1; then
         SOCKET_ACTIVE=true
-        CURRENT_PORT=$(ss -tlnp | awk '/systemd/{match($4, /[^:]+$/, a); print a[0]}' | head -1)
+        CURRENT_PORT=$(systemctl show ssh.socket --property=Listen 2>/dev/null | grep -oP '\d+(?= type=Stream)' | head -1)
     else
         CURRENT_PORT=$(grep -E "^Port " ${SSH_CONFIG} | awk '{print $2}' || echo "22")
     fi
