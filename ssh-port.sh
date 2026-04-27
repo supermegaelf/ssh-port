@@ -109,8 +109,7 @@ update_ssh_config() {
         echo -e "${GRAY}  ${ARROW}${NC} Adding new Port directive"
         echo "Port ${NEW_SSH_PORT}" >> ${SSH_CONFIG}
     fi
-    check_command "SSH port configuration updated to ${NEW_SSH_PORT}"
-
+    echo -e "${GRAY}  ${ARROW}${NC} Restarting SSH service"
     systemctl restart ssh > /dev/null 2>&1
     if [ $? -ne 0 ]; then
         echo -e "${RED}${CROSS}${NC} Failed to restart SSH service. Reverting changes..."
@@ -129,7 +128,7 @@ update_ssh_config() {
         fi
         exit 1
     fi
-    check_command "SSH service restarted successfully"
+    check_command "SSH configuration applied successfully"
 }
 
 configure_firewall() {
@@ -138,6 +137,8 @@ configure_firewall() {
     echo -e "${GREEN}======================${NC}"
     echo
 
+    echo -e "${CYAN}${INFO}${NC} Adding firewall rule..."
+    echo -e "${GRAY}  ${ARROW}${NC} Allowing port ${NEW_SSH_PORT}/tcp"
     ${FIREWALL_CMD} allow ${NEW_SSH_PORT}/tcp comment "SSH" > /dev/null 2>&1
     check_command "Firewall rule added for port ${NEW_SSH_PORT}"
 }
