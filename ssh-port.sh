@@ -149,6 +149,11 @@ update_ssh_config() {
         mkdir -p "$(dirname ${SOCKET_OVERRIDE})"
         printf "[Socket]\nListenStream=\nListenStream=0.0.0.0:%s\nListenStream=[::]:%s\n" "${NEW_SSH_PORT}" "${NEW_SSH_PORT}" > "${SOCKET_OVERRIDE}"
         echo -e "${GRAY}  ${ARROW}${NC} Updating socket activation config"
+    else
+        if ! grep -q "^ListenAddress" "${SSH_CONFIG}"; then
+            printf "ListenAddress 0.0.0.0\nListenAddress ::\n" >> "${SSH_CONFIG}"
+            echo -e "${GRAY}  ${ARROW}${NC} Adding ListenAddress directives for IPv4 and IPv6"
+        fi
     fi
 
     echo -e "${GRAY}  ${ARROW}${NC} Restarting SSH service"
