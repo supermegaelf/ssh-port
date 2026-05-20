@@ -229,7 +229,7 @@ test_connection() {
         echo
         echo -e "${YELLOW}${WARNING}${NC} Connection failed. Reverting changes..."
         echo -e "${GRAY}  ${ARROW}${NC} Restoring original configuration"
-        cp ${BACKUP_CONFIG} ${SSH_CONFIG}
+        cp "${BACKUP_CONFIG}" "${SSH_CONFIG}"
         revert_socket
         restart_ssh
         if [ $? -ne 0 ]; then
