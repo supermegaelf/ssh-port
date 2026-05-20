@@ -191,8 +191,12 @@ configure_firewall() {
     if ! iptables -L ufw-user-input -n 2>/dev/null | grep -q "dpt:${NEW_SSH_PORT}"; then
         echo -e "${GRAY}  ${ARROW}${NC} Rule not in iptables, reloading UFW"
         ${FIREWALL_CMD} reload > /dev/null 2>&1
+        if ! iptables -L ufw-user-input -n 2>/dev/null | grep -q "dpt:${NEW_SSH_PORT}"; then
+            echo -e "${RED}${CROSS}${NC} Failed to add firewall rule for port ${NEW_SSH_PORT}"
+            exit 1
+        fi
     fi
-    check_command "Firewall rule added for port ${NEW_SSH_PORT}"
+    echo -e "${GREEN}${CHECK}${NC} Firewall rule added for port ${NEW_SSH_PORT}"
 }
 
 test_connection() {
