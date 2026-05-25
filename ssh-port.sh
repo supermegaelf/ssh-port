@@ -199,6 +199,10 @@ update_ssh_config() {
                     cp "${BACKUP_CONFIG}" "${SSH_CONFIG}"
                     revert_socket
                     restart_ssh
+                    if [ $? -ne 0 ]; then
+                        echo -e "${RED}${CROSS}${NC} Failed to restart SSH after reverting. Check manually!"
+                        exit 1
+                    fi
                     ${FIREWALL_CMD} delete allow ${NEW_SSH_PORT}/tcp > /dev/null 2>&1 || true
                     echo -e "${YELLOW}${WARNING}${NC} Reverted to original SSH config due to error."
                     exit 1
