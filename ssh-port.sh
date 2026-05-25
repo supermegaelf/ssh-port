@@ -81,6 +81,13 @@ get_port_input() {
         exit 1
     fi
 
+    RANGE_LOW=$(awk '{print $1}' /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || echo 32768)
+    RANGE_HIGH=$(awk '{print $2}' /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || echo 60999)
+    if [ "$NEW_SSH_PORT" -ge "$RANGE_LOW" ] && [ "$NEW_SSH_PORT" -le "$RANGE_HIGH" ]; then
+        echo -e "${RED}${CROSS}${NC} Port ${NEW_SSH_PORT} is in the OS ephemeral range (${RANGE_LOW}-${RANGE_HIGH}). Use a port below ${RANGE_LOW} (e.g. 2222)."
+        exit 1
+    fi
+
     echo -e "${GREEN}${CHECK}${NC} Port validation successful!"
 }
 
@@ -105,6 +112,12 @@ verify_system() {
 
     echo -e "${GRAY}  ${ARROW}${NC} Current SSH port: ${CURRENT_PORT}"
     echo -e "${GRAY}  ${ARROW}${NC} New SSH port: ${NEW_SSH_PORT}"
+
+    if ss -tlnp 2>/dev/null | grep -v "sshd" | grep -qE ":${NEW_SSH_PORT}[^0-9]"; then
+        echo -e "${RED}${CROSS}${NC} Port ${NEW_SSH_PORT} is already in use by another service. Choose a different port."
+        exit 1
+    fi
+
     echo -e "${GREEN}${CHECK}${NC} Configuration analysis completed!"
 
     if ! command -v ${FIREWALL_CMD} &> /dev/null || ! ${FIREWALL_CMD} status | grep -q "Status: active" > /dev/null 2>&1; then
@@ -149,11 +162,6 @@ update_ssh_config() {
         mkdir -p "$(dirname ${SOCKET_OVERRIDE})"
         printf "[Socket]\nListenStream=\nListenStream=0.0.0.0:%s\nListenStream=[::]:%s\n" "${NEW_SSH_PORT}" "${NEW_SSH_PORT}" > "${SOCKET_OVERRIDE}"
         echo -e "${GRAY}  ${ARROW}${NC} Updating socket activation config"
-    else
-        if ! grep -q "^ListenAddress" "${SSH_CONFIG}"; then
-            printf "ListenAddress 0.0.0.0\nListenAddress ::\n" >> "${SSH_CONFIG}"
-            echo -e "${GRAY}  ${ARROW}${NC} Adding ListenAddress directives for IPv4 and IPv6"
-        fi
     fi
 
     echo -e "${GRAY}  ${ARROW}${NC} Restarting SSH service"
@@ -176,6 +184,29 @@ update_ssh_config() {
         fi
         exit 1
     fi
+
+    if ! $SOCKET_ACTIVE; then
+        sleep 1
+        if ss -tlnp 2>/dev/null | grep "sshd" | grep -q "\[::\]:${NEW_SSH_PORT}" && \
+           ! ss -tlnp 2>/dev/null | grep "sshd" | grep -q "0\.0\.0\.0:${NEW_SSH_PORT}"; then
+            if ! grep -q "^ListenAddress" "${SSH_CONFIG}"; then
+                echo -e "${GRAY}  ${ARROW}${NC} IPv6-only detected, adding ListenAddress for IPv4 and IPv6"
+                printf "ListenAddress 0.0.0.0\nListenAddress ::\n" >> "${SSH_CONFIG}"
+                echo -e "${GRAY}  ${ARROW}${NC} Restarting SSH service"
+                restart_ssh
+                if [ $? -ne 0 ]; then
+                    echo -e "${RED}${CROSS}${NC} Failed to restart SSH after adding ListenAddress. Reverting..."
+                    cp "${BACKUP_CONFIG}" "${SSH_CONFIG}"
+                    revert_socket
+                    restart_ssh
+                    ${FIREWALL_CMD} delete allow ${NEW_SSH_PORT}/tcp > /dev/null 2>&1 || true
+                    echo -e "${YELLOW}${WARNING}${NC} Reverted to original SSH config due to error."
+                    exit 1
+                fi
+            fi
+        fi
+    fi
+
     echo -e "${GREEN}${CHECK}${NC} SSH configuration applied successfully"
 }
 
