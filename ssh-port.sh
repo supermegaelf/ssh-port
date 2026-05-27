@@ -81,13 +81,6 @@ get_port_input() {
         exit 1
     fi
 
-    RANGE_LOW=$(awk '{print $1}' /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || echo 32768)
-    RANGE_HIGH=$(awk '{print $2}' /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || echo 60999)
-    if [ "$NEW_SSH_PORT" -ge "$RANGE_LOW" ] && [ "$NEW_SSH_PORT" -le "$RANGE_HIGH" ]; then
-        echo -e "${RED}${CROSS}${NC} Port ${NEW_SSH_PORT} is in the OS ephemeral range (${RANGE_LOW}-${RANGE_HIGH}). Use a port below ${RANGE_LOW} (e.g. 2222)."
-        exit 1
-    fi
-
     echo -e "${GREEN}${CHECK}${NC} Port validation successful!"
 }
 
