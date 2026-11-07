@@ -29,6 +29,9 @@ BACKUP_CONFIG="${SSH_CONFIG}.bak.$(date +%F_%T)"
 SOCKET_ACTIVE=false
 SOCKET_OVERRIDE="/etc/systemd/system/ssh.socket.d/listen.conf"
 SOCKET_BACKUP=""
+CONFIG_CHANGED=false
+SOCKET_CHANGED=false
+FIREWALL_ADDED=()
 
 #======================
 # VALIDATION FUNCTIONS
@@ -45,7 +48,7 @@ check_command() {
 
 restart_ssh() {
     if $SOCKET_ACTIVE; then
-        systemctl daemon-reload > /dev/null 2>&1
+        systemctl daemon-reload > /dev/null 2>&1 || return 1
         systemctl restart ssh.socket ssh.service > /dev/null 2>&1
     else
         systemctl restart ssh > /dev/null 2>&1
@@ -53,13 +56,63 @@ restart_ssh() {
 }
 
 revert_socket() {
-    if $SOCKET_ACTIVE; then
+    if $SOCKET_CHANGED; then
         if [ -n "$SOCKET_BACKUP" ] && [ -f "$SOCKET_BACKUP" ]; then
             cp "$SOCKET_BACKUP" "${SOCKET_OVERRIDE}"
         else
             rm -f "${SOCKET_OVERRIDE}"
         fi
     fi
+}
+
+revert_firewall() {
+    local address
+    if [ "${#FIREWALL_ADDED[@]}" -gt 0 ]; then
+        echo -e "${GRAY}  ${ARROW}${NC} Removing new firewall rule"
+    fi
+    for address in "${FIREWALL_ADDED[@]}"; do
+        if ! ${FIREWALL_CMD} --force delete allow proto tcp from any to "$address" port "${NEW_SSH_PORT}" > /dev/null 2>&1; then
+            echo -e "${RED}${CROSS}${NC} Failed to remove new firewall rule. Check manually!"
+            return 1
+        fi
+    done
+    FIREWALL_ADDED=()
+}
+
+firewall_rule_active() {
+    "$1" -S ufw-user-input 2>/dev/null | \
+        sed -E 's/ -m comment --comment ("[^"]*"|[^ ]+)//' | \
+        grep -qx -- "-A ufw-user-input -p tcp -m tcp --dport ${NEW_SSH_PORT} -j ACCEPT"
+}
+
+revert_changes() {
+    local failed=0
+    if $CONFIG_CHANGED; then
+        echo -e "${GRAY}  ${ARROW}${NC} Restoring original configuration"
+        if cp "${BACKUP_CONFIG}" "${SSH_CONFIG}" && revert_socket && sshd -t -f "${SSH_CONFIG}"; then
+            if ${1:-true} && ! restart_ssh; then
+                echo -e "${RED}${CROSS}${NC} Failed to restart SSH after reverting. Check manually!"
+                failed=1
+            fi
+        else
+            echo -e "${RED}${CROSS}${NC} Failed to restore SSH configuration. Check manually!"
+            failed=1
+        fi
+    fi
+    revert_firewall || failed=1
+    return "$failed"
+}
+
+validate_ssh_config() {
+    local effective
+    echo -e "${GRAY}  ${ARROW}${NC} Validating SSH configuration"
+    if sshd -t -f "${SSH_CONFIG}" && effective=$(sshd -T -f "${SSH_CONFIG}") && \
+       [ "$(echo "$effective" | awk '$1 == "port" {print $2}' | sort -u)" = "$NEW_SSH_PORT" ] && \
+       { $SOCKET_ACTIVE || [ "$(echo "$effective" | awk '$1 == "listenaddress" {sub(/^.*:/, "", $2); print $2}' | sort -u)" = "$NEW_SSH_PORT" ]; }; then
+        return 0
+    fi
+    echo -e "${RED}${CROSS}${NC} Invalid or conflicting SSH configuration. Reverting changes..."
+    return 1
 }
 
 #================
@@ -80,6 +133,7 @@ get_port_input() {
         echo -e "${RED}${CROSS}${NC} Invalid port number. Please enter a number between 1 and 65535."
         exit 1
     fi
+    NEW_SSH_PORT=$((10#$NEW_SSH_PORT))
 
     echo -e "${GREEN}${CHECK}${NC} Port validation successful!"
 }
@@ -92,15 +146,31 @@ verify_system() {
 
     echo -e "${CYAN}${INFO}${NC} Checking current configuration..."
 
-    if systemctl is-active ssh.socket > /dev/null 2>&1; then
-        SOCKET_ACTIVE=true
-        CURRENT_PORT=$(systemctl show ssh.socket --property=Listen 2>/dev/null | grep -oP '\d+(?= type=Stream)' | head -1)
-    else
-        CURRENT_PORT=$(grep -E "^Port " ${SSH_CONFIG} | awk '{print $2}' || echo "22")
+    local effective socket_listen
+    if ! effective=$(sshd -T -f "${SSH_CONFIG}"); then
+        echo -e "${RED}${CROSS}${NC} Failed to read effective SSH configuration."
+        exit 1
     fi
 
-    if [ -z "$CURRENT_PORT" ]; then
-        CURRENT_PORT="22"
+    if systemctl is-active ssh.socket > /dev/null 2>&1; then
+        SOCKET_ACTIVE=true
+        if ! socket_listen=$(systemctl show ssh.socket --property=Listen 2>/dev/null); then
+            echo -e "${RED}${CROSS}${NC} Failed to read SSH socket configuration."
+            exit 1
+        fi
+        CURRENT_PORT=$(echo "$socket_listen" | grep -oE '[0-9]+ (\(Stream\)|type=Stream)' | grep -oE '^[0-9]+' | sort -u)
+    else
+        CURRENT_PORT=$(echo "$effective" | awk '$1 == "listenaddress" {sub(/^.*:/, "", $2); print $2}' | sort -u)
+    fi
+
+    if echo "$CURRENT_PORT" | grep -qx "$NEW_SSH_PORT"; then
+        echo -e "${GREEN}${CHECK}${NC} SSH port ${NEW_SSH_PORT} is already configured. No changes needed."
+        exit 0
+    fi
+
+    if ! [[ "$CURRENT_PORT" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}${CROSS}${NC} Cannot determine a single current SSH port. Check Include, ListenAddress and ssh.socket settings."
+        exit 1
     fi
 
     echo -e "${GRAY}  ${ARROW}${NC} Current SSH port: ${CURRENT_PORT}"
@@ -133,6 +203,7 @@ create_backup() {
     if $SOCKET_ACTIVE && [ -f "${SOCKET_OVERRIDE}" ]; then
         SOCKET_BACKUP="${SOCKET_OVERRIDE}.bak.$(date +%F_%T)"
         cp "${SOCKET_OVERRIDE}" "${SOCKET_BACKUP}" > /dev/null 2>&1
+        check_command "Socket configuration backup created successfully"
     fi
 }
 
@@ -143,37 +214,30 @@ update_ssh_config() {
     echo
 
     echo -e "${CYAN}${INFO}${NC} Updating SSH configuration..."
-    if grep -q "^Port " ${SSH_CONFIG}; then
+    CONFIG_CHANGED=true
+    if grep -qiE '^[[:space:]]*Port[[:space:]]+' "${SSH_CONFIG}"; then
         echo -e "${GRAY}  ${ARROW}${NC} Modifying existing Port directive"
-        sed -i "s/^Port .*/Port ${NEW_SSH_PORT}/" ${SSH_CONFIG} > /dev/null 2>&1
+        sed -i "s/^[[:space:]]*[Pp][Oo][Rr][Tt][[:space:]].*/Port ${NEW_SSH_PORT}/" "${SSH_CONFIG}" > /dev/null 2>&1 || { revert_changes false; exit 1; }
     else
         echo -e "${GRAY}  ${ARROW}${NC} Adding new Port directive"
-        echo "Port ${NEW_SSH_PORT}" >> ${SSH_CONFIG}
+        sed -i "1iPort ${NEW_SSH_PORT}" "${SSH_CONFIG}" > /dev/null 2>&1 || { revert_changes false; exit 1; }
     fi
 
     if $SOCKET_ACTIVE; then
-        mkdir -p "$(dirname ${SOCKET_OVERRIDE})"
-        printf "[Socket]\nListenStream=\nListenStream=0.0.0.0:%s\nListenStream=[::]:%s\n" "${NEW_SSH_PORT}" "${NEW_SSH_PORT}" > "${SOCKET_OVERRIDE}"
+        mkdir -p "$(dirname "${SOCKET_OVERRIDE}")" || { revert_changes false; exit 1; }
+        SOCKET_CHANGED=true
+        printf "[Socket]\nListenStream=\nListenStream=0.0.0.0:%s\nListenStream=[::]:%s\n" "${NEW_SSH_PORT}" "${NEW_SSH_PORT}" > "${SOCKET_OVERRIDE}" || { revert_changes false; exit 1; }
         echo -e "${GRAY}  ${ARROW}${NC} Updating socket activation config"
     fi
+
+    validate_ssh_config || { revert_changes false; exit 1; }
 
     echo -e "${GRAY}  ${ARROW}${NC} Restarting SSH service"
     restart_ssh
     if [ $? -ne 0 ]; then
         echo -e "${RED}${CROSS}${NC} Failed to restart SSH service. Reverting changes..."
-        if [[ -f "${BACKUP_CONFIG}" ]]; then
-            echo -e "${GRAY}  ${ARROW}${NC} Restoring original configuration"
-            cp "${BACKUP_CONFIG}" "${SSH_CONFIG}"
-            revert_socket
-            restart_ssh
-            if [ $? -ne 0 ]; then
-                echo -e "${RED}${CROSS}${NC} Failed to restart SSH after reverting. Check manually!"
-                exit 1
-            fi
-            ${FIREWALL_CMD} delete allow ${NEW_SSH_PORT}/tcp > /dev/null 2>&1 || true
+        if revert_changes; then
             echo -e "${YELLOW}${WARNING}${NC} Reverted to original SSH config due to error."
-        else
-            echo -e "${RED}${CROSS}${NC} Backup file ${BACKUP_CONFIG} not found. Cannot revert."
         fi
         exit 1
     fi
@@ -184,20 +248,15 @@ update_ssh_config() {
            ! ss -tlnp 2>/dev/null | grep "sshd" | grep -q "0\.0\.0\.0:${NEW_SSH_PORT}"; then
             if ! grep -q "^ListenAddress" "${SSH_CONFIG}"; then
                 echo -e "${GRAY}  ${ARROW}${NC} IPv6-only detected, adding ListenAddress for IPv4 and IPv6"
-                printf "ListenAddress 0.0.0.0\nListenAddress ::\n" >> "${SSH_CONFIG}"
+                sed -i '1iListenAddress 0.0.0.0\nListenAddress ::' "${SSH_CONFIG}" || { revert_changes; exit 1; }
+                validate_ssh_config || { revert_changes; exit 1; }
                 echo -e "${GRAY}  ${ARROW}${NC} Restarting SSH service"
                 restart_ssh
                 if [ $? -ne 0 ]; then
                     echo -e "${RED}${CROSS}${NC} Failed to restart SSH after adding ListenAddress. Reverting..."
-                    cp "${BACKUP_CONFIG}" "${SSH_CONFIG}"
-                    revert_socket
-                    restart_ssh
-                    if [ $? -ne 0 ]; then
-                        echo -e "${RED}${CROSS}${NC} Failed to restart SSH after reverting. Check manually!"
-                        exit 1
+                    if revert_changes; then
+                        echo -e "${YELLOW}${WARNING}${NC} Reverted to original SSH config due to error."
                     fi
-                    ${FIREWALL_CMD} delete allow ${NEW_SSH_PORT}/tcp > /dev/null 2>&1 || true
-                    echo -e "${YELLOW}${WARNING}${NC} Reverted to original SSH config due to error."
                     exit 1
                 fi
             fi
@@ -208,6 +267,8 @@ update_ssh_config() {
 }
 
 configure_firewall() {
+    local status address pattern table
+    local addresses=(0.0.0.0/0)
     echo
     echo -e "${GREEN}Firewall Configuration${NC}"
     echo -e "${GREEN}======================${NC}"
@@ -215,15 +276,38 @@ configure_firewall() {
 
     echo -e "${CYAN}${INFO}${NC} Adding firewall rule..."
     echo -e "${GRAY}  ${ARROW}${NC} Allowing port ${NEW_SSH_PORT}/tcp"
-    ${FIREWALL_CMD} allow ${NEW_SSH_PORT}/tcp comment "SSH" > /dev/null 2>&1
-    if ! iptables -L ufw-user-input -n 2>/dev/null | grep -q "dpt:${NEW_SSH_PORT}"; then
-        echo -e "${GRAY}  ${ARROW}${NC} Rule not in iptables, reloading UFW"
-        ${FIREWALL_CMD} reload > /dev/null 2>&1
-        if ! iptables -L ufw-user-input -n 2>/dev/null | grep -q "dpt:${NEW_SSH_PORT}"; then
-            echo -e "${RED}${CROSS}${NC} Failed to add firewall rule for port ${NEW_SSH_PORT}"
-            exit 1
-        fi
+    if ! status=$(LC_ALL=C ${FIREWALL_CMD} status) || [ ! -r /etc/default/ufw ]; then
+        echo -e "${RED}${CROSS}${NC} Failed to read firewall configuration."
+        exit 1
     fi
+    if grep -qE '^[[:space:]]*IPV6=yes[[:space:]]*$' /etc/default/ufw; then
+        addresses+=(::/0)
+    fi
+    for address in "${addresses[@]}"; do
+        table=iptables
+        pattern="^${NEW_SSH_PORT}/tcp[[:space:]]+ALLOW([[:space:]]+IN)?[[:space:]]+Anywhere([[:space:]]+#.*)?[[:space:]]*$"
+        if [ "$address" = "::/0" ]; then
+            table=ip6tables
+            pattern="^${NEW_SSH_PORT}/tcp[[:space:]]+\(v6\)[[:space:]]+ALLOW([[:space:]]+IN)?[[:space:]]+Anywhere[[:space:]]+\(v6\)([[:space:]]+#.*)?[[:space:]]*$"
+        fi
+        if ! echo "$status" | grep -qE "$pattern"; then
+            FIREWALL_ADDED+=("$address")
+            if ! ${FIREWALL_CMD} allow proto tcp from any to "$address" port "${NEW_SSH_PORT}" comment "SSH" > /dev/null 2>&1; then
+                echo -e "${RED}${CROSS}${NC} Failed to add firewall rule for port ${NEW_SSH_PORT}"
+                revert_firewall
+                exit 1
+            fi
+        fi
+        if ! firewall_rule_active "$table"; then
+            echo -e "${GRAY}  ${ARROW}${NC} Rule not in iptables, reloading UFW"
+            if ! ${FIREWALL_CMD} reload > /dev/null 2>&1 || \
+               ! firewall_rule_active "$table"; then
+                echo -e "${RED}${CROSS}${NC} Failed to add firewall rule for port ${NEW_SSH_PORT}"
+                revert_firewall
+                exit 1
+            fi
+        fi
+    done
     echo -e "${GREEN}${CHECK}${NC} Firewall rule added for port ${NEW_SSH_PORT}"
 }
 
@@ -247,7 +331,7 @@ test_connection() {
     if [[ "$success" =~ ^[Yy]$ ]]; then
         echo
         echo -e "${CYAN}${INFO}${NC} Finalizing configuration..."
-        if ${FIREWALL_CMD} status | grep -qE "${CURRENT_PORT}/tcp.*ALLOW" || \
+        if ${FIREWALL_CMD} status | grep -qE "^${CURRENT_PORT}/tcp[[:space:]].*ALLOW" || \
            { [ "$CURRENT_PORT" = "22" ] && ${FIREWALL_CMD} status | grep -q "OpenSSH.*ALLOW"; }; then
             echo -e "${GRAY}  ${ARROW}${NC} Removing old firewall rule for port ${CURRENT_PORT}"
             ${FIREWALL_CMD} delete allow ${CURRENT_PORT}/tcp > /dev/null 2>&1 || true
@@ -260,17 +344,9 @@ test_connection() {
     else
         echo
         echo -e "${YELLOW}${WARNING}${NC} Connection failed. Reverting changes..."
-        echo -e "${GRAY}  ${ARROW}${NC} Restoring original configuration"
-        cp "${BACKUP_CONFIG}" "${SSH_CONFIG}"
-        revert_socket
-        restart_ssh
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}${CROSS}${NC} Failed to restart SSH after reverting. Check manually!"
-            exit 1
+        if revert_changes; then
+            echo -e "${GREEN}${CHECK}${NC} Reverted to original SSH config"
         fi
-        echo -e "${GRAY}  ${ARROW}${NC} Removing new firewall rule"
-        ${FIREWALL_CMD} delete allow ${NEW_SSH_PORT}/tcp > /dev/null 2>&1
-        echo -e "${GREEN}${CHECK}${NC} Reverted to original SSH config"
         echo -e "${YELLOW}${WARNING}${NC} Check your settings."
         exit 1
     fi
@@ -306,8 +382,8 @@ main() {
     get_port_input
     verify_system
     create_backup
-    update_ssh_config
     configure_firewall
+    update_ssh_config
     test_connection
     show_completion_summary
     echo
