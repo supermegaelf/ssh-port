@@ -46,9 +46,20 @@ check_command() {
     fi
 }
 
+get_socket_ports() {
+    local listen
+    listen=$(systemctl show ssh.socket --property=Listen 2>/dev/null) || return 1
+    echo "$listen" | grep -oE '[0-9]+ (\(Stream\)|type=Stream)' | grep -oE '^[0-9]+' | sort -u
+}
+
 restart_ssh() {
+    local expected_port=${1:-$NEW_SSH_PORT} socket_ports
     if $SOCKET_ACTIVE; then
         systemctl daemon-reload > /dev/null 2>&1 || return 1
+        if ! socket_ports=$(get_socket_ports) || [ "$socket_ports" != "$expected_port" ]; then
+            echo -e "${RED}${CROSS}${NC} SSH socket port does not match ${expected_port}. Check socket overrides."
+            return 1
+        fi
         systemctl restart ssh.socket ssh.service > /dev/null 2>&1
     else
         systemctl restart ssh > /dev/null 2>&1
@@ -80,9 +91,38 @@ revert_firewall() {
 }
 
 firewall_rule_active() {
-    "$1" -S ufw-user-input 2>/dev/null | \
+    local rules
+    rules=$("$1" -S ufw-user-input 2>/dev/null) || return 1
+    echo "$rules" | \
         sed -E 's/ -m comment --comment ("[^"]*"|[^ ]+)//' | \
-        grep -qx -- "-A ufw-user-input -p tcp -m tcp --dport ${NEW_SSH_PORT} -j ACCEPT"
+        awk -v port="$NEW_SSH_PORT" '
+            function contains_port(spec, parts, bounds, n, i) {
+                n = split(spec, parts, ",")
+                for (i = 1; i <= n; i++) {
+                    if (parts[i] == port) return 1
+                    if (index(parts[i], ":")) {
+                        split(parts[i], bounds, ":")
+                        if (port >= (bounds[1] == "" ? 0 : bounds[1]) &&
+                            port <= (bounds[2] == "" ? 65535 : bounds[2])) return 1
+                    }
+                }
+                return 0
+            }
+            $0 == "-A ufw-user-input -p tcp -m tcp --dport " port " -j ACCEPT" { found = 1; exit }
+            $1 == "-A" {
+                protocol = ""; target = ""; ports = ""; negated = 0
+                for (i = 3; i <= NF; i++) {
+                    if ($i == "-p") protocol = $(i+1)
+                    if ($i == "-j") target = $(i+1)
+                    if ($i == "--dport" || $i == "--dports") ports = $(i+1)
+                    if ($i == "!") negated = 1
+                }
+                if ((target == "DROP" || target == "REJECT") &&
+                    (negated || protocol == "" || protocol == "all" || protocol == "tcp") &&
+                    (negated || ports == "" || contains_port(ports))) { conflict = 1; exit }
+            }
+            END { exit (conflict ? 2 : !found) }
+        '
 }
 
 revert_changes() {
@@ -90,7 +130,7 @@ revert_changes() {
     if $CONFIG_CHANGED; then
         echo -e "${GRAY}  ${ARROW}${NC} Restoring original configuration"
         if cp "${BACKUP_CONFIG}" "${SSH_CONFIG}" && revert_socket && sshd -t -f "${SSH_CONFIG}"; then
-            if ${1:-true} && ! restart_ssh; then
+            if ${1:-true} && ! restart_ssh "$CURRENT_PORT"; then
                 echo -e "${RED}${CROSS}${NC} Failed to restart SSH after reverting. Check manually!"
                 failed=1
             fi
@@ -98,6 +138,10 @@ revert_changes() {
             echo -e "${RED}${CROSS}${NC} Failed to restore SSH configuration. Check manually!"
             failed=1
         fi
+    fi
+    if [ "$failed" -ne 0 ]; then
+        echo -e "${YELLOW}${WARNING}${NC} Firewall rules retained. Restore SSH manually before removing them!"
+        return 1
     fi
     revert_firewall || failed=1
     return "$failed"
@@ -146,7 +190,7 @@ verify_system() {
 
     echo -e "${CYAN}${INFO}${NC} Checking current configuration..."
 
-    local effective socket_listen
+    local effective
     if ! effective=$(sshd -T -f "${SSH_CONFIG}"); then
         echo -e "${RED}${CROSS}${NC} Failed to read effective SSH configuration."
         exit 1
@@ -154,11 +198,10 @@ verify_system() {
 
     if systemctl is-active ssh.socket > /dev/null 2>&1; then
         SOCKET_ACTIVE=true
-        if ! socket_listen=$(systemctl show ssh.socket --property=Listen 2>/dev/null); then
+        if ! CURRENT_PORT=$(get_socket_ports); then
             echo -e "${RED}${CROSS}${NC} Failed to read SSH socket configuration."
             exit 1
         fi
-        CURRENT_PORT=$(echo "$socket_listen" | grep -oE '[0-9]+ (\(Stream\)|type=Stream)' | grep -oE '^[0-9]+' | sort -u)
     else
         CURRENT_PORT=$(echo "$effective" | awk '$1 == "listenaddress" {sub(/^.*:/, "", $2); print $2}' | sort -u)
     fi
@@ -267,7 +310,7 @@ update_ssh_config() {
 }
 
 configure_firewall() {
-    local status address pattern table
+    local status address pattern table rule_status
     local addresses=(0.0.0.0/0)
     echo
     echo -e "${GREEN}Firewall Configuration${NC}"
@@ -280,7 +323,7 @@ configure_firewall() {
         echo -e "${RED}${CROSS}${NC} Failed to read firewall configuration."
         exit 1
     fi
-    if grep -qE '^[[:space:]]*IPV6=yes[[:space:]]*$' /etc/default/ufw; then
+    if grep -qiE "^[[:space:]]*IPV6=(yes|\"yes\"|'yes')[[:space:]]*$" /etc/default/ufw; then
         addresses+=(::/0)
     fi
     for address in "${addresses[@]}"; do
@@ -298,7 +341,14 @@ configure_firewall() {
                 exit 1
             fi
         fi
-        if ! firewall_rule_active "$table"; then
+        firewall_rule_active "$table"
+        rule_status=$?
+        if [ "$rule_status" -eq 2 ]; then
+            echo -e "${RED}${CROSS}${NC} Conflicting firewall rule for port ${NEW_SSH_PORT}. Reverting changes..."
+            revert_firewall
+            exit 1
+        fi
+        if [ "$rule_status" -ne 0 ]; then
             echo -e "${GRAY}  ${ARROW}${NC} Rule not in iptables, reloading UFW"
             if ! ${FIREWALL_CMD} reload > /dev/null 2>&1 || \
                ! firewall_rule_active "$table"; then
